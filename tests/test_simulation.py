@@ -20,19 +20,20 @@ from .conftest import NOUL
 pytestmark = pytest.mark.slow
 
 RUNS = 2000
-N_CALIB = 1000
+N_CALIB = 1000  # small samples are where a false certificate is most likely
+N_POWER = 3000  # enough rows for the overconfident model to certify most of the time
 ALPHA, DELTA = 0.1, 0.1
 # Monte Carlo slack on a share estimated from RUNS runs: 3 standard errors at p = DELTA.
 SLACK = 3 * math.sqrt(DELTA * (1 - DELTA) / RUNS)
 
 
 def simulate(
-    err_given_conf: Callable[[float], float], true_risk: Callable[[float], float], seed: int
+    err_given_conf: Callable[[float], float], true_risk: Callable[[float], float], seed: int, n: int = N_CALIB
 ) -> tuple[float, float | None, float]:
     """Certify on a fresh sample. Returns (true error rate above the chosen t, t, coverage)."""
     rng = random.Random(seed)
     rows: list[dict[str, Any]] = []
-    for _ in range(N_CALIB):
+    for _ in range(n):
         c = 0.5 + 0.5 * rng.random()  # stated confidence, uniform on [0.5, 1)
         wrong = rng.random() < err_given_conf(c)
         rows.append({"answer": {"noul": c}, "label": not wrong})
@@ -50,7 +51,7 @@ def test_guarantee_holds_for_an_overconfident_model() -> None:
     but invalid; the test has to resist them.
     """
     kappa = 1.5
-    results = [simulate(lambda c: kappa * (1 - c), lambda t: kappa * (1 - t) / 2, s) for s in range(RUNS)]
+    results = [simulate(lambda c: kappa * (1 - c), lambda t: kappa * (1 - t) / 2, s, N_POWER) for s in range(RUNS)]
     violations = sum(r > ALPHA for r, _, _ in results) / RUNS
     certified = [cov for _, t, cov in results if t is not None]
     assert violations <= DELTA + SLACK, f"guarantee violated in {violations:.1%} of runs"

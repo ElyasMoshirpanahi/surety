@@ -40,7 +40,10 @@ def test_plan(capsys: pytest.CaptureFixture[str]) -> None:
 def test_full_offline_round_trip(workdir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     w = workdir
     common = ["--questions", w / "questions.json"]
-    assert run("collect", w / "data.jsonl", *common, "--backend", "fake", "--model", "fake-1.0.0", "-o", w / "c.jsonl") == 0
+    assert (
+        run("collect", w / "data.jsonl", *common, "--backend", "fake", "--model", "fake-1.0.0", "-o", w / "c.jsonl")
+        == 0
+    )
     rows = [json.loads(x) for x in (w / "c.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 1800 and {r["resolved_model"] for r in rows} == {"fake-1.0.0"}
 
@@ -50,7 +53,11 @@ def test_full_offline_round_trip(workdir: Path, capsys: pytest.CaptureFixture[st
 
     assert run("report", w / "c.jsonl", *common, "--alpha", 0.15, "-o", w / "r.md") == 0
     md = (w / "r.md").read_text(encoding="utf-8")
-    assert "Coverage vs threshold" in md and "Reliability bins" in md and sum(line.startswith("## ") for line in md.splitlines()) == 6
+    assert (
+        "Coverage vs threshold" in md
+        and "Reliability bins" in md
+        and sum(line.startswith("## ") for line in md.splitlines()) == 6
+    )
 
     gate = Gate.load(w / "certs.json", ledger=Ledger(w / "l.jsonl"))
     q = json.loads((w / "questions.json").read_text(encoding="utf-8"))
@@ -107,3 +114,20 @@ def test_verify_detects_tampering(tmp_path: Path, capsys: pytest.CaptureFixture[
 def test_row_id_prefers_explicit_id() -> None:
     assert row_id({"id": 7, "state": "a"}) == "7"
     assert row_id({"state": "a", "labels": {}}) == row_id({"labels": {}, "state": "a"})
+
+
+def test_example_runs_offline(capsys: pytest.CaptureFixture[str]) -> None:
+    import runpy
+
+    root = Path(__file__).resolve().parents[1] / "examples" / "jev_vs_laya"
+    mod = runpy.run_path(str(root / "run.py"))
+    assert mod["main"](["--fake"]) == 0
+    out = capsys.readouterr().out
+    assert "Jev (simulated)" in out and "Laya (simulated)" in out and "department" in out
+
+
+def test_example_dataset_is_marked_synthetic() -> None:
+    path = Path(__file__).resolve().parents[1] / "examples" / "jev_vs_laya" / "triage.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 400 and all(r["synthetic"] is True for r in rows)
+    assert all("@" not in r["state"]["text"] or "@example.com" in r["state"]["text"] for r in rows)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import multiprocessing as mp
 from pathlib import Path
@@ -22,7 +23,7 @@ def test_round_trip_and_chain(tmp_path: Path) -> None:
     assert Ledger.verify(p) == (True, 5)
     recs = list(Ledger.records(p))
     assert recs[0]["prev"] == GENESIS
-    assert all(b["prev"] == a["hash"] for a, b in zip(recs, recs[1:], strict=False))
+    assert all(b["prev"] == a["hash"] for a, b in itertools.pairwise(recs))
     assert Ledger(p).prev == led.prev == recs[-1]["hash"]
     assert Ledger.anchor(p) == (5, recs[-1]["hash"])
 

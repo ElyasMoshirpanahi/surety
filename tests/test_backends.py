@@ -108,7 +108,7 @@ def test_fake_backend_is_deterministic_and_readable() -> None:
     r1, r2 = a.predict("t", qs), a.predict("t", qs)
     assert r1 == r2 and r1["model"] == "fake-1.0.0"
     for qid, q in qs.items():
-        dec, conf = read_answer(q, r1["answers"][qid])
+        _, conf = read_answer(q, r1["answers"][qid])
         assert 0 < conf <= 1
     assert FakeBackend(seed=1).predict("t", qs) != FakeBackend(seed=2).predict("t", qs)
     assert isinstance(a, Backend)
