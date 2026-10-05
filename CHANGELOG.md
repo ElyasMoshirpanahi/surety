@@ -6,6 +6,25 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `LayaServeBackend` and `surety collect --backend laya-serve`. The revision is
+  checked through `/health`, and `@served` pins whatever the server reports at start.
+- Live Laya tests (`pytest -m laya`) and a weekly `laya` CI job running CPU
+  PyTorch, `laya-serve` and in-process `laya.Router`.
+- `--limit`, `--skip-jev` and `--laya-inprocess` for `examples/jev_vs_laya/run.py`.
+
+### Fixed
+- Found by testing against real laya 0.3.27: Laya's top-level `model` is
+  `laya-rl-agent` for every checkpoint, so `collect` rejected every Laya row as
+  answered by the wrong model. The resolved model is now `<checkpoint>@<commit sha>`,
+  taken from the response's `routing.model` and the loaded revision. Laya's own
+  value is kept as `server_model`.
+
+### Changed
+- Laya models must be pinned as `<checkpoint>@<40-hex commit>` (or `@reviewed` /
+  `@served`). A bare checkpoint name is a moving alias and is refused unless you
+  pass `--allow-alias`.
+
 ## [0.2.0]
 
 The package layout is split from the single-file v0.1 core. The statistical method
