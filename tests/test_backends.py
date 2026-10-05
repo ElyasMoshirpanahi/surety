@@ -11,7 +11,15 @@ from typing import Any
 import pytest
 
 from surety.answers import read_answer
-from surety.backends import Backend, BackendError, FakeBackend, HttpBackend, LayaBackend, SdkBackend
+from surety.backends import (
+    Backend,
+    BackendError,
+    FakeBackend,
+    HttpBackend,
+    LayaBackend,
+    LayaServeBackend,
+    SdkBackend,
+)
 from surety.cli import call_with_retry
 
 from .conftest import CHOICE, NOUL, SCORE
@@ -141,14 +149,99 @@ def test_sdk_backend_returns_wire_dicts() -> None:
         SdkBackend("jev-latest", client=Client())
 
 
-def test_laya_backend_checks_routing() -> None:
-    class Router:
-        def __init__(self, routed: str):
-            self.routed = routed
+SHA_A = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
+SHA_B = "e4e9ddf21a7b1903b7acffd8814ad4307bf63a67"
 
-        def predict(self, state: Any, questions: Any, model: str | None = None) -> dict[str, Any]:
-            return {"answers": {"q": {"noul": 0.7}}, "routing": {"model": self.routed}}
 
-    assert LayaBackend("laya-base", router=Router("laya-base")).predict("x", {})["model"] == "laya-base"
+def laya_payload(routed: str = "english") -> dict[str, Any]:
+    """Shape captured from laya 0.3.27 (Router.predict and laya-serve /v1/systemone, 2026-10-05)."""
+    return {
+        "model": "laya-rl-agent",  # the same for every checkpoint: useless for pinning
+        "answers": {"q": {"type": "noul", "noul": 0.9048, "confidence": 0.9048, "answer_confidence": 0.9048}},
+        "usage": {"input_tokens": 205, "output_tokens": 0},
+        "routing": {"model": routed, "repo": "convaiinnovations/laya", "reason": "explicit model='english'"},
+    }
+
+
+class Router:
+    def __init__(self, routed: str = "english", revision: str | None = SHA_A):
+        self.routed, self.revision, self.calls = routed, revision, []
+
+    def predict(self, state: Any, questions: Any, model: str | None = None) -> dict[str, Any]:
+        self.calls.append(model)
+        return laya_payload(self.routed)
+
+    @property
+    def loaded_revisions(self) -> dict[str, str | None]:
+        return {"english": self.revision}
+
+
+def test_laya_backend_reports_the_checkpoint_pin_as_model() -> None:
+    r = Router()
+    b = LayaBackend(f"english@{SHA_A}", router=r)
+    out = b.predict("x", {"q": NOUL})
+    assert b.model == out["model"] == f"english@{SHA_A}"
+    assert out["server_model"] == "laya-rl-agent"
+    assert r.calls == ["english"]  # the router gets the bare checkpoint name
+
+
+def test_laya_backend_refuses_wrong_routing_or_revision() -> None:
     with pytest.raises(BackendError, match="routed"):
-        LayaBackend("laya-base", router=Router("laya-large")).predict("x", {})
+        LayaBackend(f"english@{SHA_A}", router=Router(routed="multilingual")).predict("x", {})
+    with pytest.raises(BackendError, match="revision"):
+        LayaBackend(f"english@{SHA_A}", router=Router(revision=SHA_B)).predict("x", {})
+
+
+@pytest.mark.parametrize(
+    ("model", "match"),
+    [("english", "no revision"), ("english@main", "40-character"), ("@" + SHA_A, "bad Laya model")],
+)
+def test_laya_pins_must_be_commit_shas(model: str, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        LayaBackend(model, router=Router())
+
+
+def test_laya_unpinned_only_when_asked() -> None:
+    b = LayaBackend("english", router=Router(), allow_unpinned=True)
+    assert b.predict("x", {})["model"] == f"english@{SHA_A}"  # still records what actually loaded
+
+
+class Serve:
+    """Stands in for laya-serve: /health reports revisions, /v1/systemone answers."""
+
+    def __init__(self, revision: str = SHA_A):
+        self.revision, self.paths = revision, []
+
+    def __call__(self, req: urllib.request.Request, timeout: float) -> Any:
+        self.paths.append(req.full_url.rsplit("/", 1)[-1])
+        if req.full_url.endswith("/health"):
+            return io.BytesIO(json.dumps({"status": "ok", "revisions": {"english": self.revision}}).encode())
+        return io.BytesIO(json.dumps(laya_payload()).encode())
+
+
+def test_laya_serve_backend_pins_served_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TYPESAFE_API_KEY", "sk-secret")
+    serve = Serve()
+    monkeypatch.setattr(urllib.request, "urlopen", serve)
+    b = LayaServeBackend("http://127.0.0.1:8765", "english@served", health_every=0)
+    assert b.model == f"english@{SHA_A}"
+    assert b.predict("x", {"q": NOUL})["model"] == f"english@{SHA_A}"
+    serve.revision = SHA_B  # someone restarts the server on new weights
+    with pytest.raises(BackendError, match="revision"):
+        b.predict("x", {"q": NOUL})
+    assert serve.paths == ["health", "systemone", "health", "systemone", "health"]
+
+
+def test_laya_serve_backend_never_sends_the_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TYPESAFE_API_KEY", "sk-secret")
+    sent: list[urllib.request.Request] = []
+
+    def spy(req: urllib.request.Request, timeout: float) -> Any:
+        sent.append(req)
+        return Serve()(req, timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", spy)
+    LayaServeBackend("http://127.0.0.1:8765", f"english@{SHA_A}").predict("x", {})
+    assert all(r.get_header("Authorization") is None for r in sent)
+    with pytest.raises(ValueError, match="self-hosted"):
+        LayaServeBackend("https://api.typesafe.ai", f"english@{SHA_A}")

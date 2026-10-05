@@ -7,8 +7,10 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The default test run must never touch the network."""
+def _no_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default test run must never touch the network. Only `laya`-marked live tests may."""
+    if request.node.get_closest_marker("laya"):
+        return
 
     def guard(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("tests must not open network connections")

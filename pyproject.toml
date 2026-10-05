@@ -49,6 +49,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "slow: long statistical simulations (run with -m slow)",
+    "laya: live tests against a real Laya; skipped unless SURETY_LAYA_URL / SURETY_LAYA_INPROCESS is set",
 ]
 
 [tool.ruff]
