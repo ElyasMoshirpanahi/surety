@@ -16,7 +16,16 @@ from typing import Any
 
 from . import __version__
 from .answers import canon, fingerprint, sha
-from .backends import DEFAULT_BASE_URL, Backend, BackendError, FakeBackend, HttpBackend, LayaBackend, SdkBackend
+from .backends import (
+    DEFAULT_BASE_URL,
+    Backend,
+    BackendError,
+    FakeBackend,
+    HttpBackend,
+    LayaBackend,
+    LayaServeBackend,
+    SdkBackend,
+)
 from .certify import Certificate, certify_many, is_alias
 from .ledger import Ledger
 from .report import render
@@ -98,7 +107,10 @@ def make_backend(a: argparse.Namespace, rows: Sequence[Mapping[str, Any]]) -> Ba
     if a.backend == "sdk":
         return SdkBackend(a.model, base_url=None if a.base_url == DEFAULT_BASE_URL else a.base_url)
     if a.backend == "laya":
-        return LayaBackend(a.model)
+        return LayaBackend(a.model, allow_unpinned=a.allow_alias)
+    if a.backend == "laya-serve":
+        url = "http://localhost:8000" if a.base_url == DEFAULT_BASE_URL else a.base_url
+        return LayaServeBackend(url, a.model, timeout=a.timeout, allow_unpinned=a.allow_alias)
     truth = {sha(r["state"]): r.get("labels", {}) for r in rows}
     return FakeBackend(a.model, truth=lambda s: truth.get(sha(s), {}), seed=a.seed)
 
@@ -114,15 +126,19 @@ def collect(a: argparse.Namespace) -> int:
     if not a.resume and out.exists() and out.stat().st_size:
         raise SystemExit(f"{out} exists; pass --resume to continue it or choose another --out")
     todo = [r for r in rows if row_id(r) not in done]
-    backend = make_backend(a, rows)
+    try:
+        backend = make_backend(a, rows)
+    except (ValueError, ImportError, BackendError) as e:
+        raise SystemExit(str(e)) from None
+    pinned = backend.model  # e.g. laya "english@served" resolves to "english@<sha>" here
     lock = threading.Lock()
     failures: list[str] = []
 
     def one(row: dict[str, Any]) -> None:
         res = call_with_retry(lambda: backend.predict(row["state"], questions), retries=a.max_retries)
-        resolved = res.get("model") or a.model
-        if resolved != a.model and not a.allow_alias:
-            raise BackendError(f"asked for {a.model!r} but the server answered as {resolved!r}", status=400)
+        resolved = res.get("model") or pinned
+        if resolved != pinned and not a.allow_alias:
+            raise BackendError(f"asked for {pinned!r} but the server answered as {resolved!r}", status=400)
         lines = []
         for qid, label in row["labels"].items():
             if qid not in questions:
@@ -132,7 +148,7 @@ def collect(a: argparse.Namespace) -> int:
                 "question_id": qid,
                 "question_fp": fps[qid],
                 "slice": row.get("slice"),
-                "model": a.model,
+                "model": pinned,
                 "resolved_model": resolved,
                 "answer": res["answers"][qid],
                 "label": label,
@@ -225,8 +241,12 @@ def build_parser() -> argparse.ArgumentParser:
         "data", help='JSONL rows: {"state": ..., "labels": {"qid": label}, "slice": optional, "id": optional}'
     )
     c.add_argument("--questions", required=True, help="JSON file: the questions dict you send in production")
-    c.add_argument("--model", required=True, help="pin a version such as jev-1.13.0, never an alias")
-    c.add_argument("--backend", choices=["http", "sdk", "laya", "fake"], default="http")
+    c.add_argument(
+        "--model",
+        required=True,
+        help="pin a version: jev-1.13.0, or for Laya english@<commit sha> / english@served",
+    )
+    c.add_argument("--backend", choices=["http", "sdk", "laya", "laya-serve", "fake"], default="http")
     c.add_argument("--base-url", default=DEFAULT_BASE_URL, help="e.g. http://localhost:8000 for laya-serve")
     c.add_argument("--concurrency", type=int, default=4)
     c.add_argument("--max-retries", type=int, default=5, help="retries on 429, 5xx and network errors")

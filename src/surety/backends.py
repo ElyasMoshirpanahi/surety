@@ -9,6 +9,8 @@ import json
 import math
 import os
 import random
+import re
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -121,30 +123,149 @@ class SdkBackend:
         }
 
 
+_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def split_laya_pin(model: str, *, allow_unpinned: bool = False) -> tuple[str, str | None]:
+    """ "english@<40-hex commit>" -> ("english", sha). "@reviewed" / "@served" pass through for resolution.
+
+    Laya checkpoint names map to Hugging Face repos whose weights can change, so a
+    bare name is a moving alias: it is refused unless `allow_unpinned`.
+    """
+    name, _, rev = model.partition("@")
+    if not name:
+        raise ValueError(f"bad Laya model {model!r}; expected <checkpoint>@<commit sha>")
+    if not rev:
+        if allow_unpinned:
+            return name, None
+        raise ValueError(
+            f"Laya model {model!r} has no revision, so its weights can change under the same name. "
+            f"Pin it as {name}@<commit sha>, {name}@reviewed (in-process) or {name}@served (laya-serve)."
+        )
+    if rev not in ("reviewed", "served") and not _SHA.match(rev):
+        raise ValueError(f"Laya revision {rev!r} must be a full 40-character commit SHA")
+    return name, rev
+
+
+def _routed(out: Mapping[str, Any]) -> str | None:
+    routing = out.get("routing")
+    model = routing.get("model") if isinstance(routing, Mapping) else None
+    return str(model) if model is not None else None
+
+
+def _pinned_payload(out: dict[str, Any], name: str, routed: str | None, rev: str | None, want: str | None) -> None:
+    """Check routing and revision, then report the checkpoint pin as the resolved model.
+
+    Laya's own top-level `model` is the same for every checkpoint (e.g. "laya-rl-agent"),
+    so it is kept as `server_model` and replaced by "<checkpoint>@<sha>".
+    """
+    if routed is not None and routed != name:
+        raise BackendError(f"laya routed to {routed!r}, not the pinned {name!r}", status=400)
+    if want is not None and rev != want:
+        raise BackendError(f"laya checkpoint {name!r} is at revision {rev!r}, not the pinned {want!r}", status=400)
+    out["server_model"] = out.get("model")
+    out["model"] = f"{name}@{rev}" if rev else name
+
+
 class LayaBackend:
     """In-process Laya (`pip install surety-gate[laya]`).
 
-    `laya.Router` picks a checkpoint per request unless the model is pinned, so
-    the model is required and every response's routing is checked against it.
+    Pin the checkpoint and its weights: `LayaBackend("english@<commit sha>")`, or
+    `"english@reviewed"` for the SHA Laya publishes in `laya.revisions.PINNED_REVISIONS`.
+    `laya.Router` routes per request unless told otherwise, so every response's
+    routing and the loaded revision are checked against the pin.
     """
 
-    def __init__(self, model: str, *, router: Any = None):
-        self.model = model
+    def __init__(self, model: str, *, router: Any = None, allow_unpinned: bool = False):
+        self.name, rev = split_laya_pin(model, allow_unpinned=allow_unpinned)
+        if rev == "served":
+            raise ValueError("@served is for laya-serve; in-process use a commit SHA or @reviewed")
         if router is None:
             try:
                 from laya import Router
             except ImportError:
                 raise ImportError("LayaBackend needs Laya: pip install 'surety-gate[laya]'") from None
-            router = Router()
+            if rev == "reviewed":
+                rev = _reviewed_revision(self.name)
+            router = Router(revisions={self.name: rev} if rev else None, max_loaded=1)
+        elif rev == "reviewed":
+            rev = _reviewed_revision(self.name)
+        self.revision = rev
         self.router = router
+        self.model = f"{self.name}@{rev}" if rev else self.name
 
     def predict(self, state: Any, questions: Mapping[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = dict(self.router.predict(state, dict(questions), model=self.model))
-        routing = out.get("routing")
-        routed = routing.get("model") if isinstance(routing, Mapping) else None
-        if routed is not None and routed != self.model:
-            raise BackendError(f"laya routed to {routed!r}, not the pinned {self.model!r}", status=400)
-        out.setdefault("model", routed or self.model)
+        out: dict[str, Any] = dict(self.router.predict(state, dict(questions), model=self.name))
+        loaded = getattr(self.router, "loaded_revisions", {}) or {}
+        _pinned_payload(out, self.name, _routed(out), loaded.get(self.name, self.revision), self.revision)
+        return out
+
+
+def _reviewed_revision(name: str) -> str:
+    """The commit SHA Laya itself publishes as reviewed for checkpoint `name`."""
+    from laya.revisions import resolve_revision
+    from laya.router import DEFAULT_MODELS
+
+    if name not in DEFAULT_MODELS:
+        raise ValueError(f"no reviewed revision for Laya checkpoint {name!r}; pin a commit SHA")
+    repo = DEFAULT_MODELS[name][0]  # the Router loads every checkpoint from this repo (as subfolders)
+    return str(resolve_revision(repo, "reviewed"))
+
+
+class LayaServeBackend(HttpBackend):
+    """laya-serve over HTTP, with the checkpoint and its weights pinned.
+
+    `model="english@<sha>"` checks the routed checkpoint on every response and the
+    loaded revision (from `/health`, which is the only place laya-serve reports it)
+    at start and every `health_every` seconds. `"english@served"` pins whatever the
+    server reports at start, so the certificate records the concrete SHA.
+    No API key is sent unless you pass one.
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        model: str = "english@served",
+        *,
+        api_key: str | None = None,
+        timeout: float = 30.0,
+        health_every: float = 60.0,
+        allow_unpinned: bool = False,
+    ):
+        if base_url.rstrip("/") == DEFAULT_BASE_URL:
+            raise ValueError("LayaServeBackend is for a self-hosted laya-serve, not the hosted Jev API")
+        self.name, rev = split_laya_pin(model, allow_unpinned=allow_unpinned)
+        if rev == "reviewed":
+            raise ValueError("@reviewed needs the laya package; for laya-serve pin the SHA from /health or use @served")
+        super().__init__(base_url, self.name, api_key=api_key, timeout=timeout)
+        self.health_every = health_every
+        self._checked_at = -math.inf
+        if rev == "served":
+            rev = self.served_revision()
+            if rev is None:
+                raise BackendError(f"laya-serve at {self.base_url} reports no revision for {self.name!r}")
+            self._checked_at = time.monotonic()
+        self.revision = rev
+        self.model = f"{self.name}@{rev}" if rev else self.name
+
+    def served_revision(self) -> str | None:
+        req = urllib.request.Request(f"{self.base_url}/health", headers={"accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                health = json.loads(resp.read())
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise BackendError(f"cannot read {self.base_url}/health: {e}") from None
+        revs = health.get("revisions") or {}
+        rev = revs.get(self.name)
+        return str(rev) if rev else None
+
+    def predict(self, state: Any, questions: Mapping[str, Any]) -> dict[str, Any]:
+        out = super().predict(state, questions)  # sends model=<checkpoint name>
+        rev = self.revision
+        if self.revision is not None and time.monotonic() - self._checked_at >= self.health_every:
+            rev = self.served_revision()
+            self._checked_at = time.monotonic()
+        _pinned_payload(out, self.name, _routed(out), rev, self.revision)
         return out
 
 

@@ -16,7 +16,16 @@ Read before trusting a certificate:
 """
 
 from .answers import fingerprint, read_answer
-from .backends import Backend, BackendError, FakeBackend, HttpBackend, LayaBackend, SdkBackend, SystemOne
+from .backends import (
+    Backend,
+    BackendError,
+    FakeBackend,
+    HttpBackend,
+    LayaBackend,
+    LayaServeBackend,
+    SdkBackend,
+    SystemOne,
+)
 from .certify import Certificate, certify, certify_many, curve, is_alias
 from .gate import AUTOMATE, REVIEW, Decision, Gate
 from .ledger import GENESIS, Ledger
@@ -38,6 +47,7 @@ __all__ = [
     "Gate",
     "HttpBackend",
     "LayaBackend",
+    "LayaServeBackend",
     "Ledger",
     "SdkBackend",
     "SystemOne",
