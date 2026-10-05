@@ -232,7 +232,14 @@ SURETY_LAYA_URL=http://127.0.0.1:8000 SURETY_LAYA_INPROCESS=1 pytest -m laya
 ```
 
 CI runs lint, types and the fast tests on every push, and the slow simulations and
-the live Laya job weekly. See [CONTRIBUTING.md](CONTRIBUTING.md) and
+the live Laya job weekly. To run the same jobs locally in Docker:
+
+```bash
+bash ci/local.sh          # lint, types and tests on Python 3.10–3.13
+bash ci/local.sh slow     # Monte Carlo checks
+bash ci/local.sh laya     # live Laya on CPU, weights cached in a Docker volume
+bash ci/local.sh all
+``` See [CONTRIBUTING.md](CONTRIBUTING.md) and
 [docs/method.md](docs/method.md).
 
 ## License
