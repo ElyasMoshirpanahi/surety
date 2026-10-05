@@ -6,7 +6,12 @@ Offline, with two simulated backends (no network, no keys):
 
 Live (needs TYPESAFE_API_KEY for Jev and a running `laya-serve`):
 
-    python examples/jev_vs_laya/run.py --laya-url http://localhost:8000 --laya-model <pinned laya model>
+    python examples/jev_vs_laya/run.py --laya-url http://localhost:8000
+
+Laya only, no API key (laya-serve, or the model loaded in this process):
+
+    python examples/jev_vs_laya/run.py --skip-jev
+    python examples/jev_vs_laya/run.py --skip-jev --laya-inprocess
 
 The data is synthetic (see make_data.py). On your own traffic, use human labels only.
 """
@@ -20,7 +25,16 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from surety import Backend, Certificate, FakeBackend, HttpBackend, certify_many, fingerprint
+from surety import (
+    Backend,
+    Certificate,
+    FakeBackend,
+    HttpBackend,
+    LayaBackend,
+    LayaServeBackend,
+    certify_many,
+    fingerprint,
+)
 from surety.cli import call_with_retry
 
 HERE = Path(__file__).parent
@@ -58,12 +72,15 @@ def backends(a: argparse.Namespace, rows: list[dict[str, Any]]) -> list[tuple[st
             ("Jev (simulated)", FakeBackend("sim-jev-1.13.0", truth=lookup, skill=0.93, sharpness=1.4, seed=1)),
             ("Laya (simulated)", FakeBackend("sim-laya-0.3", truth=lookup, skill=0.9, sharpness=0.9, seed=2)),
         ]
-    if not a.laya_model:
-        raise SystemExit("--laya-model is required for a live run: pin the exact model laya-serve should use")
-    return [
-        ("Jev", HttpBackend(model=a.jev_model)),
-        ("Laya", HttpBackend(base_url=a.laya_url, model=a.laya_model)),
-    ]
+    out: list[tuple[str, Backend]] = []
+    if not a.skip_jev:
+        out.append(("Jev", HttpBackend(model=a.jev_model)))
+    if a.laya_inprocess:
+        model = a.laya_model.replace("@served", "@reviewed")
+        out.append(("Laya (in-process)", LayaBackend(model)))
+    else:
+        out.append(("Laya (laya-serve)", LayaServeBackend(a.laya_url, a.laya_model)))
+    return out
 
 
 def fmt(c: Certificate | None) -> str:
@@ -81,14 +98,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--delta", type=float, default=0.05)
     ap.add_argument("--jev-model", default="jev-1.13.0")
     ap.add_argument("--laya-url", default="http://localhost:8000")
-    ap.add_argument("--laya-model")
+    ap.add_argument("--laya-model", default="english@served", help="checkpoint@<commit sha>, or @served")
+    ap.add_argument("--laya-inprocess", action="store_true", help="load laya.Router here instead of calling laya-serve")
+    ap.add_argument("--skip-jev", action="store_true", help="Laya only (no TYPESAFE_API_KEY needed)")
     ap.add_argument("--data", default=str(HERE / "triage.jsonl"))
+    ap.add_argument("--limit", type=int, help="use only the first N rows (quick smoke runs)")
     a = ap.parse_args(argv)
 
     rows = [json.loads(line) for line in Path(a.data).read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = rows[: a.limit] if a.limit else rows
     questions = json.loads((HERE / "questions.json").read_text(encoding="utf-8"))
     results: dict[str, dict[str, Certificate]] = {}
     for name, backend in backends(a, rows):
+        print(f"collecting {len(rows)} rows from {name} ({backend.model}) ...", flush=True)
         calib = collect(backend, rows, questions)
         certs = certify_many(calib, questions, alpha=a.alpha, delta=a.delta, simultaneous=True)
         results[name] = {c.question_id: c for c in certs}

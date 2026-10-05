@@ -21,9 +21,13 @@ no network and no keys.
 
 ```bash
 export TYPESAFE_API_KEY=...            # sent only to https://api.typesafe.ai
-laya-serve &                           # from `pip install laya`, on :8000
-python examples/jev_vs_laya/run.py --laya-url http://localhost:8000 --laya-model <pinned model>
+LAYA_REVISION=reviewed LAYA_MODELS=english laya-serve &   # pip install "laya[serve]", on :8000
+python examples/jev_vs_laya/run.py --laya-url http://localhost:8000
 ```
+
+Laya only, without a Jev key: add `--skip-jev`. To load Laya in this process
+instead of calling the server, add `--laya-inprocess`. `--limit 60` keeps a CPU
+run to a minute or two. On CPU, all 400 rows took about 11 minutes through laya-serve.
 
 ## Files
 
@@ -32,6 +36,7 @@ python examples/jev_vs_laya/run.py --laya-url http://localhost:8000 --laya-model
 | `questions.json` | Three questions: `department` (choice), `urgency` (score 0–3), `is_refund` (noul). |
 | `triage.jsonl` | `{"id", "synthetic", "state", "labels"}` rows, ready for `surety collect`. |
 | `make_data.py` | Regenerates `triage.jsonl` byte for byte. |
+| `laya-answers.jsonl` | Real answers from laya 0.3.27 (`english@55cf4c4e…`, CPU) to every ticket, from `surety collect --backend laya-serve`. Used for the README charts. |
 | `run.py` | Collects from both backends, certifies with `--simultaneous`, and prints the table. |
 
 Expect different thresholds and coverage per model. A threshold certified for one
