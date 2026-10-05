@@ -6,13 +6,9 @@ import math
 from collections.abc import Sequence
 
 # Fixed in advance: a grid chosen by looking at the data would void the guarantee.
-DEFAULT_GRID: tuple[float, ...] = tuple(round(0.5 + 0.025 * i, 3) for i in range(19)) + (
-    0.96,
-    0.97,
-    0.98,
-    0.99,
-    0.995,
-    0.999,
+DEFAULT_GRID: tuple[float, ...] = (
+    *(round(0.5 + 0.025 * i, 3) for i in range(19)),
+    *(0.96, 0.97, 0.98, 0.99, 0.995, 0.999),
 )
 DEFAULT_BETS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.5)
 

@@ -221,7 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--grid-size", type=int, default=len(DEFAULT_GRID))
 
     c = sub.add_parser("collect", help="answer labelled states with a /v1/systemone backend")
-    c.add_argument("data", help='JSONL rows: {"state": ..., "labels": {"qid": label}, "slice": optional, "id": optional}')
+    c.add_argument(
+        "data", help='JSONL rows: {"state": ..., "labels": {"qid": label}, "slice": optional, "id": optional}'
+    )
     c.add_argument("--questions", required=True, help="JSON file: the questions dict you send in production")
     c.add_argument("--model", required=True, help="pin a version such as jev-1.13.0, never an alias")
     c.add_argument("--backend", choices=["http", "sdk", "laya", "fake"], default="http")

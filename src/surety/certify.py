@@ -81,7 +81,9 @@ def _score(
     for i, r in enumerate(rows):
         row_fp = r.get("question_fp")
         if row_fp is not None and row_fp != fp:
-            raise ValueError(f"calibration row {i} was answered under a different question definition ({row_fp} != {fp})")
+            raise ValueError(
+                f"calibration row {i} was answered under a different question definition ({row_fp} != {fp})"
+            )
         dec, conf = read_answer(question, r["answer"])
         err = dec != norm(r["label"])
         pts.append((conf, err))
@@ -214,7 +216,7 @@ def group_model(key: Group, rows: Sequence[Mapping[str, Any]], *, allow_alias: b
     models = {r["model"] for r in rows}
     if len(models) != 1:
         raise ValueError(f"{qid}/{sl}: rows mix models {sorted(models)}; certify each model separately")
-    model = next(iter(models))
+    model = str(next(iter(models)))
     resolved = {r.get("resolved_model") or model for r in rows}
     if resolved != {model}:
         raise ValueError(f"{qid}/{sl}: requested {model!r} but the server answered as {sorted(resolved)}")
