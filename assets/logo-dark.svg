@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="surety">
+  <title>surety</title>
+  <path d="M120 16 L202 46 V116 C202 168 168 204 120 224 C72 204 38 168 38 116 V46 Z" fill="none" stroke="#f0f6fc" stroke-width="10" stroke-linejoin="round"/>
+  <rect x="67" y="162" width="11" height="14" rx="2.5" fill="#f0f6fc" fill-opacity="0.28"/><rect x="83" y="154" width="11" height="22" rx="2.5" fill="#f0f6fc" fill-opacity="0.28"/><rect x="99" y="146" width="11" height="30" rx="2.5" fill="#f0f6fc" fill-opacity="0.28"/><rect x="115" y="134" width="11" height="42" rx="2.5" fill="#f0f6fc" fill-opacity="0.28"/><rect x="131" y="120" width="11" height="56" rx="2.5" fill="#2da44e" fill-opacity="1"/><rect x="147" y="106" width="11" height="70" rx="2.5" fill="#2da44e" fill-opacity="1"/><rect x="163" y="90" width="11" height="86" rx="2.5" fill="#2da44e" fill-opacity="1"/>
+  <line x1="127" y1="66" x2="127" y2="188" stroke="#f0f6fc" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 7"/>
+  <path d="M146 64 l9 9 l17 -19" fill="none" stroke="#2da44e" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
